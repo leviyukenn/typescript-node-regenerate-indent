@@ -1,6 +1,12 @@
 ### 使い方
 
-#### 1. typescript -> javascript にコンパイルする
+#### 1. node_modules をインストールする
+
+```
+yarn install
+```
+
+#### 2. typescript -> javascript にコンパイルする
 
 ```
 yarn build
@@ -8,7 +14,7 @@ yarn build
 
 コンパイルした結果は`./lib`に格納される
 
-#### 2. nodejs のスクリプトを実行する
+#### 3. nodejs のスクリプトを実行する
 
 - アウトプットファイルのパスは実在するディレクター内のファイルのパスを指定する必要があります、ただしファイル自体は実在である必要がありません。
 
@@ -22,7 +28,7 @@ node [スクリプトのパス] [インデントを復活させたいファイ�
 node ./lib/regenerateIndent.js public/src.txt public/output.txt
 ```
 
-#### 3. Unit Test
+#### 4. Unit Test
 
 Unit Test を実行する
 
