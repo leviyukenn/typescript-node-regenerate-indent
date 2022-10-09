@@ -1,0 +1,549 @@
+package test.view;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.awt.image.VolatileImage;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import javax.swing.JPanel;
+import logics.netmonitor.entity.IPObjEntity;
+import logics.netmonitor.entity.RelObjEntity;
+import logics.netmonitor.model.FIFOBuffer;
+import logics.netmonitor.model.PreserveNetworkValues;
+import logics.netmonitor.thread.IpToNameTranslator;
+import logics.netmonitor.thread.PacketCaptureThread;
+import props.netmonitor.ParameterEntity;
+public class RaderPanel extends JPanel {
+private static final long serialVersionUID = 3256439188181431609L;
+private static DecimalFormat formatter = new DecimalFormat("#0.00");
+private static DecimalFormat secFormat = new DecimalFormat("#,###");
+private static SimpleDateFormat dateFormat = null;
+private static final int DETAIL_STRING_OFFSET = 3;
+
+private static ConcurrentHashMap<Integer, Font> fontCache = new ConcurrentHashMap<Integer, Font>();
+private static ConcurrentHashMap<Integer, Font> boldFontCache = new ConcurrentHashMap<Integer, Font>();
+private static DecimalFormat rankFormat = new DecimalFormat("0000");
+
+static {
+dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss:SSS");
+formatter.setMaximumFractionDigits(2);
+formatter.setMinimumFractionDigits(2);
+}
+
+private static PreserveNetworkValues ent = null;
+private static int fps = 0;
+private static int fpsCount = 0;
+
+private static long startTime = System.currentTimeMillis();
+private static long upTime = System.currentTimeMillis();
+private static BufferedImage bi = null;
+
+public static Color getColor(int rArg, int gArg, int bArg){
+return getColor(rArg,gArg,bArg,255);
+}
+
+public static Color getColor(int rArg, int gArg, int bArg, int aArg) {
+int r = (int)(rArg * ((float)ParameterEntity.lighting / 50));
+int g = (int)(gArg * ((float)ParameterEntity.lighting / 50));
+int b = (int)(bArg * ((float)ParameterEntity.lighting / 50));
+
+if (r >= 255) {
+r = 255;
+}else if(r < 0){
+r = 0;
+}
+
+if (g >= 255) {
+g = 255;
+}else if(g < 0){
+g = 0;
+}
+
+if (b >= 255) {
+b = 255;
+}else if(b < 0){
+b = 0;
+}
+
+if(ParameterEntity.qualitySelect == 0){
+return new Color(r,g,b);
+}
+return new Color(r, g, b, aArg);
+}
+
+public static void setRenderingHint(Graphics2D g) {
+RenderingSettingRegister.setQuality(g);
+}
+
+public static String makeDataSizeStr(long dataSizeLong) {
+double dataSize = (double) dataSizeLong;
+
+if (dataSizeLong <= 1024L) {
+return formatter.format(dataSize) + "B";
+} else if (dataSizeLong <= (1024L * 1024L)) {
+return formatter.format(dataSize / (1024L)) + "KB";
+} else if (dataSizeLong <= (1024L * 1024L * 1024L)) {
+return formatter.format(dataSize / (1024L * 1024L)) + "MB";
+} else if (dataSizeLong <= (1024L * 1024L * 1024L * 1024L)) {
+return formatter.format(dataSize / (1024L * 1024L * 1024L)) + "GB";
+} else if (dataSizeLong <= (1024L * 1024L * 1024L * 1024L * 1024L)) {
+return formatter.format(dataSize / (1024L * 1024L * 1024L * 1024L)) + "TB";
+} else {
+return formatter.format(dataSize / (1024L * 1024L * 1024L * 1024L * 1024L)) + "PB";
+}
+}
+
+public static int getZoomValFromZPos(double zPos) {
+double zTemp = (zPos * 3) / ParameterEntity.zoomLevel;
+
+if (zTemp >= 3) {
+zTemp = 3;
+}
+
+int res = (int) (3 + zTemp);
+
+if (res <= 0) {
+res = 0;
+}
+
+return res;
+}
+
+private static void drawDetailStringText(Graphics2D g){
+g.setFont(getFont(10));
+g.setColor(getColor(180, 180, 180));
+g.drawString("IP Cache Size ", 580 + ParameterEntity.getWidthGap(), 65 + DETAIL_STRING_OFFSET);
+g.drawString("Relation Cache Size ", 580 + ParameterEntity.getWidthGap(), 75 + DETAIL_STRING_OFFSET);
+g.drawString("Total Transfer Size ", 580 + ParameterEntity.getWidthGap(), 85 + DETAIL_STRING_OFFSET);
+g.drawString("Average Transfer Size ", 580 + ParameterEntity.getWidthGap(), 95 + DETAIL_STRING_OFFSET);
+g.drawString("Packet Que Usage ", 580 + ParameterEntity.getWidthGap(), 105 + DETAIL_STRING_OFFSET);
+g.drawString("Draw Frames Per Sec ", 580 + ParameterEntity.getWidthGap(), 115 + DETAIL_STRING_OFFSET);
+g.drawString("Net Monitor Up Time(ms) ", 580 + ParameterEntity.getWidthGap(), 125 + DETAIL_STRING_OFFSET);
+g.drawString("Unsolved IP Address ", 580 + ParameterEntity.getWidthGap(), 45 + DETAIL_STRING_OFFSET);
+g.drawString("Solved IP Address ", 580 + ParameterEntity.getWidthGap(), 55 + DETAIL_STRING_OFFSET);
+g.drawString("Received Packets ", 580 + ParameterEntity.getWidthGap(), 135 + DETAIL_STRING_OFFSET);
+g.drawString("Dropped Packets ", 580 + ParameterEntity.getWidthGap(), 145 + DETAIL_STRING_OFFSET);
+}
+
+private static void drawDetailString(Graphics2D g, long currentTime) {
+g.setFont(getFont(12));
+g.setColor(getColor(255, 255, 255));
+Date date = Calendar.getInstance().getTime();
+g.drawString(dateFormat.format(date), 600 + ParameterEntity.getWidthGap(), 30);
+ParameterEntity.getHeight();
+g.setFont(getFont(10));
+
+g.setColor(getColor(180, 180, 180));
+g.drawString(": " + Integer.toString(IpToNameTranslator.getIpAddrQueCount()), 700 + ParameterEntity.getWidthGap(), 45 + DETAIL_STRING_OFFSET);
+g.drawString(": " + Integer.toString(IpToNameTranslator.getCacheSize()), 700 + ParameterEntity.getWidthGap(), 55 + DETAIL_STRING_OFFSET);
+g.drawString(": " + Integer.toString(ent.getIPMapSize()), 700 + ParameterEntity.getWidthGap(), 65 + DETAIL_STRING_OFFSET);
+g.drawString(": " + Integer.toString(ent.getRelMapSize()), 700 + ParameterEntity.getWidthGap(), 75 + DETAIL_STRING_OFFSET);
+g.drawString(": " + makeDataSizeStr(PacketCaptureThread.networkTotalTransferSize), 700 + ParameterEntity.getWidthGap(), 85 + DETAIL_STRING_OFFSET);
+g.drawString(": " + makeDataSizeStr(ent.getAverageTransferSize()), 700 + ParameterEntity.getWidthGap(), 95 + DETAIL_STRING_OFFSET);
+g.drawString(": " + ent.getPacketQueCount(), 700 + ParameterEntity.getWidthGap(), 105 + DETAIL_STRING_OFFSET);
+g.drawString(": " + fps, 700 + ParameterEntity.getWidthGap(), 115 + DETAIL_STRING_OFFSET);
+g.drawString(": " + Long.toString(currentTime - upTime), 700 + ParameterEntity.getWidthGap(), 125 + DETAIL_STRING_OFFSET);
+g.drawString(": " + PacketCaptureThread.getReceivedPackets(), 700 + ParameterEntity.getWidthGap(), 135 + DETAIL_STRING_OFFSET);
+g.drawString(": " + (PacketCaptureThread.getDroppedPackets() + FIFOBuffer.getOverflowCount()), 700 + ParameterEntity.getWidthGap(), 145 + DETAIL_STRING_OFFSET);
+}
+
+private static void drawIPDetail(Graphics2D g, List list) {
+for (int i = 0; (i < list.size()) && (i < 5); i++) {
+String drawStr = ((String) list.get(i));
+int drawLen = 150 + (ParameterEntity.getWidthGap() / 5) + 2;
+if(drawStr.length() <= drawLen) drawLen = drawStr.length() - 1;
+g.drawString(drawStr.substring(0, drawLen), 10, 595 + (i * 10) + ParameterEntity.getHeightGap());
+}
+}
+
+private static void drawPacketDetail(Graphics2D g, List pdl) {
+for (int i = 0; (i < pdl.size()) && (i < (40 + (ParameterEntity.getHeightGap() / 10))); i++) {
+g.drawString((String) pdl.get(i), 580 + ParameterEntity.getWidthGap(), 175 + (i * 10));
+}
+}
+
+private static void drawRelationDetail(Graphics2D g, RelObjEntity[] rels) {
+g.setColor(getColor(75,75,75));
+int count = 0;
+for (int x = 20 ; x < ParameterEntity.getWidth() - 650 ; x = x + 440){
+for (int i = 0; count < rels.length && (i < (49 + (ParameterEntity.getHeightGap() / 10))); i++) {
+if(rels[count].nowTransferActive()){
+g.setColor(getColor(150, 150, 150));
+}else{
+g.setColor(getColor(75,75,75));
+}
+g.drawString(rankFormat.format(count) + ":" + cutString(IpToNameTranslator.lookupName(rels[count].getFromIpStr()),20) ,x,70 + (i * 10));
+if(rels[count].nowTransferActive()){
+g.drawString("=" ,x + 150,70 + (i * 10));
+}
+g.drawString(cutString(IpToNameTranslator.lookupName(rels[count].getToAddress()),20) ,x + 160,70 + (i * 10));
+g.drawString(makeDataSizeStr(rels[count].getTotalTransfer()) ,x + 280,70 + (i * 10));
+g.drawString("U" + makeDataSizeStr(rels[count].getUpload()) ,x + 330,70 + (i * 10));
+g.drawString("D" + makeDataSizeStr(rels[count].getDownload()) ,x + 380,70 + (i * 10));
+count++;
+}
+}
+}
+
+private static String cutString(String base, int length) {
+if (base == null) {
+return base;
+}
+char[] baseChar = base.toCharArray();
+StringBuffer sb = new StringBuffer();
+for (int i = 0; i < baseChar.length; i++) {
+sb.append(baseChar[i]);
+int size = sb.toString().getBytes().length;
+if (size >= length) {
+sb.append("...");
+return sb.toString();
+}
+}
+return sb.toString();
+}
+
+public static void clearBackBuffer(){
+bi = null;
+}
+
+public static void updateBackBuffer(){
+if(ParameterEntity.qualitySelect == 0){
+bi = new BufferedImage(ParameterEntity.getWidth(),ParameterEntity.getHeight(),BufferedImage.TYPE_BYTE_INDEXED);
+}else{
+bi = new BufferedImage(ParameterEntity.getWidth(),ParameterEntity.getHeight(),BufferedImage.TYPE_INT_ARGB);
+}
+Graphics2D g = bi.createGraphics();
+drawCheck(g);
+drawRects(g);
+drawDetailStringText(g);
+
+g.dispose();
+}
+
+public void paintComponent(Graphics gx) {
+long currentTime = System.currentTimeMillis();
+
+if(bi == null){ updateBackBuffer();}
+
+gx.drawImage(bi, 0, 0,this);
+
+Graphics2D g = (Graphics2D)gx;
+
+setRenderingHint(g);
+
+fpsCount++;
+
+if ((currentTime - 1000) >= startTime) {
+long transferTime = currentTime - startTime;
+startTime = System.currentTimeMillis();
+fps = (int) ((fpsCount * 1000) / transferTime);
+fpsCount = 0;
+}
+
+g.setFont(getFont(10));
+
+if (ent == null) {
+return;
+}
+
+drawDetailString(g, currentTime);
+
+List pdl = ent.getPacketDataList();
+drawPacketDetail(g, pdl);
+
+if (ParameterEntity.draw3D) {
+draw3DMessage(g);
+}
+
+ConcurrentHashMap ipMap = ent.getIpMap();
+
+if (ipMap == null) {
+return;
+}
+
+List list = ent.getPacketList();
+
+drawIPDetail(g, list);
+if(ParameterEntity.trafficRanking)drawRelationDetail(g, ent.getRelationsSortByTraffic());
+if (list.size() >= 5) {
+while (list.size() > 5) {
+list.remove(0);
+}
+}
+
+IPObjEntity[] ipArray = (IPObjEntity[])ipMap.values().toArray(new IPObjEntity[ipMap.size()]);
+
+calculate3DGeometory(g, ipArray);
+if(ParameterEntity.qualitySelect == 0)g.setColor(getColor(100, 180, 100));
+drawLine(g);
+if(ParameterEntity.qualitySelect == 0)g.setColor(getColor(30, 120, 30));
+drawPoint(g, ipArray, ipMap,currentTime);
+
+g.dispose();
+}
+
+public void paintComponent(PreserveNetworkValues ent) {
+this.ent = ent;
+this.paintComponent(super.getGraphics());
+}
+
+public void repaint(PreserveNetworkValues ent) {
+this.ent = ent;
+super.repaint();
+}
+
+public void update(Graphics g) {
+paint(g);
+}
+
+public int validColor(int colorNum) {
+if (colorNum <= 255) {
+return colorNum;
+}
+
+return 255;
+}
+
+private void calculate3DGeometory(Graphics2D g, IPObjEntity[] ipArray) {
+double theta = 0;
+double phi = 0;
+double tempSinT = 0;
+double tempCosT = 0;
+double tempSinP = 0;
+double tempCosP = 0;
+
+if (ParameterEntity.draw3D) {
+theta = (double) ParameterEntity.mouseX * 0.01;
+phi = (double) ParameterEntity.mouseY * 0.01;
+tempSinT = Math.sin(theta);
+tempCosT = Math.cos(theta);
+tempSinP = Math.sin(phi);
+tempCosP = Math.cos(phi);
+
+if (ParameterEntity.zoomLevel <= 0.01) {
+ParameterEntity.zoomLevel = 0.01;
+}
+
+for (int i = 0; i < ipArray.length; i++) {
+IPObjEntity ent = ipArray[i];
+if(ent.localItem){
+ent.setTopPos(ParameterEntity.getHeightPointMax() * 25 / 2);
+ent.setLeftPos(ParameterEntity.getWidthPointMax() * 25 / 2);
+}else{
+double ty = (ent.yPos * tempCosT) + (ent.zPos * tempSinT);
+double tz = (-ent.yPos * tempSinT) + (ent.zPos * tempCosT);
+ent.yPos = ty;
+ent.zPos = tz;
+
+double tx = (ent.xPos * tempCosP) - (ent.zPos * tempSinP);
+tz = (ent.xPos * tempSinP) + (ent.zPos * tempCosP);
+ent.xPos = tx;
+ent.zPos = tz;
+
+double zView = 1.5 / (1.5 - ent.zPos);
+int drawTop = (int) (((ParameterEntity.getHeightPointMax() * 25) / (ParameterEntity.zoomLevel * 2) * zView * ent.xPos) + ((ParameterEntity.getHeightPointMax() * 25) / 2) + 3);
+int drawLeft = (int) (((ParameterEntity.getWidthPointMax() * 25) / (ParameterEntity.zoomLevel * 2) * zView * ent.yPos) + ((ParameterEntity.getWidthPointMax() * 25) / 2) + 3);
+ent.setTopPos(drawTop);
+ent.setLeftPos(drawLeft);
+}
+}
+}
+}
+
+private void draw3DMessage(Graphics2D g) {
+g.drawString("X-AxisForce  : ", 25, 30);
+g.drawString(Integer.toString(ParameterEntity.mouseX), 100, 30);
+g.drawString("Y-AxisForce  : ", 25, 40);
+g.drawString(Integer.toString(ParameterEntity.mouseY), 100, 40);
+g.drawString("CameraLength : ", 25, 50);
+g.drawString(Integer.toString((int) (ParameterEntity.zoomLevel * 100)), 100, 50);
+}
+
+private static void drawCheck(Graphics2D g) {
+g.setColor(new Color(0, 0, 0));
+g.fillRect(0, 0, ParameterEntity.getWidth(), ParameterEntity.getHeight());
+
+for (int x = 0; x < (ParameterEntity.getWidth() - 20); x = x + 5) {
+if ((x % 25) == 0) {
+g.setColor(getColor(50, 50, 50));
+} else {
+g.setColor(getColor(25, 25, 25));
+}
+
+g.drawLine(5 + x, 5, 5 + x, ParameterEntity.getHeight() - 20);
+}
+
+for (int x = 0; x < (ParameterEntity.getHeight() - 20); x = x + 5) {
+if ((x % 25) == 0) {
+g.setColor(getColor(50, 50, 50));
+} else {
+g.setColor(getColor(25, 25, 25));
+}
+
+g.drawLine(5, 5 + x, ParameterEntity.getWidth() - 20, 5 + x);
+}
+}
+
+private static void drawLine(Graphics2D g) {
+ConcurrentHashMap rlMap = ent.getRlMap();
+if (ParameterEntity.draw3D) {
+g.setFont(getFont(10));
+}
+
+Color nowColor = g.getColor();
+for (Iterator itr = rlMap.keySet().iterator() ; itr.hasNext();) {
+RelObjEntity rEnt = (RelObjEntity) rlMap.get(itr.next());
+if (rEnt != null && rEnt.valid()) {
+if(ParameterEntity.qualitySelect != 0){
+g.setColor(rEnt.getDrawColor());
+}else if(ParameterEntity.drawLine){
+if(rEnt.nowTransferActive()){
+g.setColor(rEnt.getDrawColor());
+}else{
+g.setColor(nowColor);
+}
+}
+
+IPObjEntity fromIp = rEnt.getFromIp();
+IPObjEntity toIp = rEnt.getToIp();
+
+if (!ParameterEntity.draw3D) {
+fromIp.resetPos();
+toIp.resetPos();
+}
+
+if (ParameterEntity.drawLine || rEnt.nowTransferActive()) {
+g.drawLine(fromIp.getLeftPos() + 2, fromIp.getTopPos() + 2, toIp.getLeftPos() + 2, toIp.getTopPos() + 2);
+g.drawString(makeDataSizeStr(rEnt.getTotalTransfer()), (fromIp.getLeftPos() + toIp.getLeftPos()) / 2, (fromIp.getTopPos() + toIp.getTopPos()) / 2);
+}
+}
+}
+}
+
+private void drawPoint(Graphics2D g, IPObjEntity[] ipArray, ConcurrentHashMap ipMap, long currentTime) {
+Arrays.sort(ipArray, new Comparator<IPObjEntity>(){
+public int compare(IPObjEntity o1, IPObjEntity o2) {
+if(o1.lastConnectionTime - o2.lastConnectionTime >= 1){
+return -1;
+}else if(o1.lastConnectionTime - o2.lastConnectionTime <= -1){
+return 1;
+}else{
+return 0;
+}
+}});
+
+for (int i = 0; i < ipArray.length; i++) {
+IPObjEntity ent = ipArray[i];
+double zDraw = 0;
+
+if (ParameterEntity.draw3D) {
+double zTemp = ent.zPos / ParameterEntity.zoomLevel;
+zDraw = zTemp;
+
+if (zTemp <= -1.0) {
+zTemp = -1.0;
+} else if (zTemp >= 1.0) {
+zTemp = 1.0;
+}
+}
+
+if(ParameterEntity.qualitySelect != 0){
+g.setColor(ent.getDrawColor());
+}
+
+g.fillRect(ent.getLeftPos() - (int) (3 * zDraw), ent.getTopPos() - (int) (3 * zDraw), (int) (5 + (3 * zDraw)), (int) (5 + (3 * zDraw)));
+
+String inetName = IpToNameTranslator.lookupName(ent.getIpAddr());
+
+if (ParameterEntity.draw3D) {
+int fontSize = (int) (10 + (5 * zDraw));
+
+if (fontSize <= 5) {
+fontSize = 5;
+} else if (fontSize >= 24) {
+fontSize = 24;
+}
+
+g.setFont(getBoldFont(fontSize));
+}
+
+double zStr = 3 * zDraw;
+
+if (zStr <= 0.1) {
+zStr = 0.1;
+} else if (zStr >= 16) {
+zStr = 16;
+}
+
+g.drawString(inetName, (int) (ent.getLeftPos() - ((inetName.getBytes().length * 2.5) + (zStr * 1.5))), ent.getTopPos() + (int) (15 + zStr));
+
+long lastConnectAfter = (ParameterEntity.ipDotLifeTime * 1000) - (currentTime - ent.lastConnectionTime);
+
+if (lastConnectAfter <= 0) {
+lastConnectAfter = 0;
+}
+
+g.drawString(secFormat.format(lastConnectAfter), (int) (ent.getLeftPos() + 7), ent.getTopPos() + 5);
+
+ent.increaseShowCount();
+ent.repaintCheck();
+
+int nodeMax = ParameterEntity.nodeMax;
+if(nodeMax <= 10) nodeMax = 10;
+
+if (lastConnectAfter <= 0 || i >= nodeMax) {
+ent.setArrive(false);
+ipMap.remove(ipArray[i].getIpAddr());
+}
+}
+}
+
+private static void drawRects(Graphics2D g) {
+g.setColor(getColor(25, 25, 25,190));
+g.fillRect(570 + ParameterEntity.getWidthGap(), 35, 200, 120);
+g.setColor(getColor(125, 125, 125,190));
+g.drawRect(570 + ParameterEntity.getWidthGap(), 35, 200, 120);
+g.setColor(getColor(50, 50, 50,190));
+g.fillRect(570 + ParameterEntity.getWidthGap(), 160, 200, 410 + ParameterEntity.getHeightGap());
+g.setColor(getColor(125, 125, 125,190));
+g.fillRect(570 + ParameterEntity.getWidthGap(), 15, 201, 20);
+g.setColor(getColor(30, 30, 30));
+g.fillRect(5, 580 + ParameterEntity.getHeightGap(), 775 + ParameterEntity.getWidthGap(), 60);
+g.setColor(getColor(100, 100, 100));
+g.drawRect(5, 580 + ParameterEntity.getHeightGap(), 775 + ParameterEntity.getWidthGap(), 60);
+if(ParameterEntity.draw3D){
+g.setColor(getColor(50, 50, 50, 130));
+g.fillRect(20, 20, 100, 35);
+}
+}
+
+public static Font getFont(int size){
+if(fontCache.contains(size)){
+return fontCache.get(size);
+}
+Font font = new java.awt.Font("Monospaced", java.awt.Font.PLAIN, size);
+fontCache.put(size, font);
+return font;
+}
+
+public static Font getBoldFont(int size){
+if(boldFontCache.contains(size)){
+return boldFontCache.get(size);
+}
+Font font = new java.awt.Font("Monospaced", java.awt.Font.BOLD, size);
+boldFontCache.put(size, font);
+return font;
+}
+}
